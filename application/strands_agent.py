@@ -22,6 +22,7 @@ from mcp.client.streamable_http import streamablehttp_client
 from botocore.config import Config
 from dataclasses import dataclass
 from strands import Agent, tool
+from strands.types.exceptions import MaxTokensReachedException
 
 logging.basicConfig(
     level=logging.INFO,  # Default to INFO level
@@ -638,7 +639,7 @@ def get_model():
         STOP_SEQUENCE = "" 
 
     if chat.model_type == 'claude':
-        maxOutputTokens = chat.get_max_output_tokens()
+        maxOutputTokens = chat.get_max_output_tokens(chat.model_id)
     else:
         maxOutputTokens = 5120
 
