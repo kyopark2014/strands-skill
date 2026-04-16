@@ -11,18 +11,18 @@ import skill
 import chat
 import subprocess
 
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from typing import Dict, List, Optional
 from strands.models import BedrockModel
 from strands_tools import current_time, file_read, file_write
 from strands.agent.conversation_manager import SlidingWindowConversationManager
 from strands.tools.mcp import MCPClient
 from mcp import stdio_client, StdioServerParameters
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.streamable_http import streamable_http_client
+from mcp.shared._httpx_utils import create_mcp_http_client
 from botocore.config import Config
 from dataclasses import dataclass
 from strands import Agent, tool
-from strands.types.exceptions import MaxTokensReachedException
 
 logging.basicConfig(
     level=logging.INFO,  # Default to INFO level
@@ -32,6 +32,15 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger("strands-agent")
+
+
+@asynccontextmanager
+async def _streamable_http_transport(url: str, headers: dict[str, str] | None):
+    client = create_mcp_http_client(headers=headers)
+    async with client:
+        async with streamable_http_client(url, http_client=client) as streams:
+            yield streams
+
 
 strands_tools = []
 mcp_servers = []
@@ -746,9 +755,9 @@ class MCPClientManager:
             try:
                 if "transport" in config and config["transport"] == "streamable_http":
                     try:
-                        self.clients[name] = MCPClient(lambda: streamablehttp_client(
-                            url=config["url"], 
-                            headers=config["headers"]
+                        self.clients[name] = MCPClient(lambda: _streamable_http_transport(
+                            config["url"],
+                            config["headers"],
                         ))
                     except Exception as http_error:
                         logger.error(f"Failed to create streamable HTTP client for {name}: {http_error}")

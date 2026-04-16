@@ -42,33 +42,6 @@ mode_descriptions = {
     "Agent": [
         "Strands Agent SDK를 활용한 Agent를 이용합니다."
     ],
-    "Strands Supervisor": [
-        "Supervisor를 이용한 Multi-agent Collaboration입니다. 여기에서는 Supervisor/Collaborators의 구조를 가지고 있습니다."
-    ],
-    "Strands Swarm": [
-        "Swarm 형태의 이용한 Multi-agent를 구현하기 위하여 agent들을 Collaboration형태로 구현합니다."
-    ],
-    "Strands Swarm Tool": [
-        "Swarm Tool을 이용한 Multi-agent Collaboration입니다. 여기에서는 Agent들이 서로 다른 답을 구한 다음에 summarize를 수행합니다. (Collaborative Mode)"
-    ],
-    "Strands Code Swarm": [
-        "Code Swarm을 이용하면 Multi-agent Collaboration을 이용해 Code를 생성합니다."
-    ],
-    "Strands Workflow": [
-        "Workflow를 이용한 Multi-agent Collaboration입니다. 여기에서는 Workflow의 구조를 가지고 있습니다."
-    ],
-    "Strands Graph": [
-        "Graph를 이용한 Multi-agent Collaboration입니다. 여기에서는 Graph의 구조를 가지고 있습니다."
-    ],
-    "Strands Graph Builder": [
-        "Graph Builder를 이용한 Workflow를 Multi-agent 구현합니다."
-    ],
-    "Strands Plan and Execute": [
-        "Plan and Execute를 이용한 Multi-agent Collaboration입니다. 여기에서는 Plan and Execute의 구조를 가지고 있습니다."
-    ],
-    "Strands Graph With Loop": [
-        "Graph With Loop를 이용한 Multi-agent Collaboration입니다. 여기에서는 Graph With Loop의 구조를 가지고 있습니다."
-    ],
     "enterprise-search": [
         "Email, chat, documents, and wikis 등 다양한 도구를 이용해 검색을 합니다."
     ],
