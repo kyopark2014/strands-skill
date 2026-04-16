@@ -6,12 +6,9 @@ import logging
 import sys
 import utils
 import boto3
-import yaml
-import skill
-import chat
 import subprocess
 
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import contextmanager
 from typing import Dict, List, Optional
 from strands.models import BedrockModel
 from strands_tools import current_time, file_read, file_write
@@ -19,10 +16,8 @@ from strands.agent.conversation_manager import SlidingWindowConversationManager
 from strands.tools.mcp import MCPClient
 from mcp import stdio_client, StdioServerParameters
 from mcp.client.streamable_http import streamable_http_client
-from mcp.shared._httpx_utils import create_mcp_http_client
 from botocore.config import Config
 from urllib import parse
-from dataclasses import dataclass
 from strands import Agent, tool
 
 logging.basicConfig(
@@ -33,15 +28,6 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger("strands-agent")
-
-
-@asynccontextmanager
-async def _streamable_http_transport(url: str, headers: dict[str, str] | None):
-    client = create_mcp_http_client(headers=headers)
-    async with client:
-        async with streamable_http_client(url, http_client=client) as streams:
-            yield streams
-
 
 strands_tools = []
 mcp_servers = []
@@ -60,142 +46,18 @@ s3_bucket = config.get("s3_bucket")
 sharing_url = config.get("sharing_url")
 
 WORKING_DIR = os.path.dirname(os.path.abspath(__file__))
-SKILLS_DIR = os.path.join(WORKING_DIR, "skills")
 ARTIFACTS_DIR = os.path.join(WORKING_DIR, "artifacts")
 
-
-@dataclass
-class Skill:
-    name: str
-    description: str
-    instructions: str
-    path: str
-
-class SkillManager:
-    """Discovers, loads and selects Agent Skills following the Anthropic spec."""
-
-    def __init__(self, skills_dir: str = SKILLS_DIR):
-        self.skills_dir = skills_dir
-        self.registry: dict[str, Skill] = {}
-        self._discover()
-
-    # ---- discovery & metadata loading ----
-
-    def _discover(self):
-        """Scan skills directory and load metadata (frontmatter only)."""
-        if not os.path.isdir(self.skills_dir):
-            os.makedirs(self.skills_dir, exist_ok=True)
-            logger.info(f"Created skills directory: {self.skills_dir}")
-            return
-
-        for entry in os.listdir(self.skills_dir):
-            skill_md = os.path.join(self.skills_dir, entry, "SKILL.md")
-            if os.path.isfile(skill_md):
-                try:
-                    meta, instructions = self._parse_skill_md(skill_md)
-                    skill = Skill(
-                        name=meta.get("name", entry),
-                        description=meta.get("description", ""),
-                        instructions=instructions,
-                        path=os.path.join(self.skills_dir, entry),
-                    )
-                    self.registry[skill.name] = skill
-                    logger.info(f"Skill discovered: {skill.name}")
-                except Exception as e:
-                    logger.warning(f"Failed to load skill '{entry}': {e}")
-
-    @staticmethod
-    def _parse_skill_md(filepath: str) -> tuple[dict, str]:
-        """Parse YAML frontmatter + markdown body from a SKILL.md file."""
-        with open(filepath, "r", encoding="utf-8") as f:
-            raw = f.read()
-
-        if not raw.startswith("---"):
-            return {}, raw
-
-        parts = raw.split("---", 2)
-        if len(parts) < 3:
-            return {}, raw
-
-        frontmatter = yaml.safe_load(parts[1]) or {}
-        body = parts[2].strip()
-        return frontmatter, body
-
-    # ---- prompt generation (progressive disclosure) ----
-    def available_skills_xml(self) -> str:
-        """Generate <available_skills> XML for the system prompt (metadata only)."""
-        if not self.registry:
-            return ""
-        lines = ["<available_skills>"]
-        for s in self.registry.values():
-            lines.append("  <skill>")
-            lines.append(f"    <name>{s.name}</name>")
-            lines.append(f"    <description>{s.description}</description>")
-            lines.append("  </skill>")
-        lines.append("</available_skills>")
-        return "\n".join(lines)
-
-    def get_skill_instructions(self, name: str) -> Optional[str]:
-        """Return full instructions for a skill (loaded on demand)."""
-        skill = self.registry.get(name)
-        return skill.instructions if skill else None
-
-    def select_skills(self, query: str) -> list[Skill]:
-        """Keyword-based matching to select relevant skills for a query."""
-        query_lower = query.lower()
-        selected = []
-        for skill in self.registry.values():
-            keywords = skill.description.lower().split()
-            if any(kw in query_lower for kw in keywords if len(kw) > 3):
-                selected.append(skill)
-        return selected
-
-    def build_active_skill_prompt(self, skills: list[Skill]) -> str:
-        """Build the full instructions block for activated skills."""
-        if not skills:
-            return ""
-        parts = ["<active_skills>"]
-        for s in skills:
-            parts.append(f'<skill name="{s.name}">')
-            parts.append(s.instructions)
-            parts.append("</skill>")
-        parts.append("</active_skills>")
-        return "\n".join(parts)
-
-# global singleton
-skill_manager = SkillManager()
-
-SKILL_USAGE_GUIDE = (
-    "\n## Skill 사용 가이드\n"
-    "위의 <available_skills>에 나열된 skill이 사용자의 요청과 관련될 때:\n"
-    "1. 먼저 get_skill_instructions 도구로 해당 skill의 상세 지침을 로드하세요.\n"
-    "2. 지침에 포함된 코드 패턴을 execute_code 도구로 실행하세요.\n"
-    "3. skill 지침이 없는 일반 질문은 직접 답변하세요.\n"
-)
-
 BASE_SYSTEM_PROMPT = (
-    "당신의 이름은 서연이고, 질문에 친근한 방식으로 대답하도록 설계된 대화형 AI입니다.\n"
-    "상황에 맞는 구체적인 세부 정보를 충분히 제공합니다.\n"
-    "모르는 질문을 받으면 솔직히 모른다고 말합니다.\n"
-    "한국어로 답변하세요.\n\n"
-    "## Agent Workflow\n"
-    "1. 사용자 입력을 받는다\n"
-    "2. 요청에 맞는 skill이 있으면 get_skill_instructions 도구로 상세 지침을 로드한다\n"
-    "3. skill 지침에 따라 execute_code, write_file 등의 도구를 사용하여 작업을 수행한다\n"
-    "4. 결과 파일이 있으면 upload_file_to_s3로 업로드하여 URL을 제공한다\n"
-    "5. 최종 결과를 사용자에게 전달한다\n"
+    "당신의 이름은 서연이고, 질문에 대해 친절하게 답변하는 사려깊은 인공지능 도우미입니다."
+    "상황에 맞는 구체적인 세부 정보를 충분히 제공합니다."
+    "모르는 질문을 받으면 솔직히 모른다고 말합니다."
+    "결과 파일이 있으면 upload_file_to_s3로 업로드하여 URL을 제공합니다."
 )
 
 def build_system_prompt(plugin_name: Optional[str] = None, command: Optional[str] = None) -> str:
-    """Assemble the full system prompt with available skills metadata."""
-    if command:
-        base = skill.build_command_prompt(plugin_name, command)
-    elif plugin_name:
-        base = skill.build_skill_prompt(plugin_name)
-    else:
-        base = BASE_SYSTEM_PROMPT
-
-    return base
+    """Return the system prompt for the agent."""
+    return BASE_SYSTEM_PROMPT
 
 def s3_uri_to_console_url(uri: str, region: str) -> str:
     """Open the object in the AWS S3 console (when sharing_url is not configured)."""
@@ -550,45 +412,6 @@ def memory_get(path: str, from_line: int = 0, lines: int = 0) -> str:
         return json.dumps({"text": f"Error reading file: {e}", "path": path}, ensure_ascii=False)
 
 
-@tool
-def get_skill_instructions(plugin_name: str, skill_name: str) -> str:
-    """Load the full instructions for a specific skill by name.
-
-    Use this when you need detailed instructions for a task that matches
-    one of the available skills listed in the system prompt.
-
-    Args:
-        plugin_name: The plugin name (e.g. 'base', 'frontend-design').
-        skill_name: The name of the skill to load (e.g. 'pdf').
-
-    Returns:
-        The full skill instructions, or an error message if not found.
-    """
-    logger.info(f"###### get_skill_instructions: {skill_name} (plugin={plugin_name}) ######")
-    skill_mgr = skill.skill_managers.get(plugin_name)
-    if skill_mgr is None:
-        if plugin_name == "base":
-            skills_dir = skill.SKILLS_DIR
-        else:
-            skills_dir = os.path.join(WORKING_DIR, "plugins", plugin_name, "skills")
-        skill_mgr = skill.SkillManager(skills_dir)
-        skill.skill_managers[plugin_name] = skill_mgr
-
-    instructions = skill_mgr.get_skill_instructions(skill_name)
-    if instructions:
-        return instructions
-
-    base_mgr = skill.skill_managers.get("base")
-    if base_mgr is None:
-        base_mgr = skill.SkillManager(skill.SKILLS_DIR)
-        skill.skill_managers["base"] = base_mgr
-    instructions = base_mgr.get_skill_instructions(skill_name)
-    if instructions:
-        return instructions
-
-    available = ", ".join(skill_mgr.registry.keys())
-    return f"Skill '{skill_name}' not found. Available skills: {available}"
-
 def _ensure_cli_scripts_on_path() -> None:
     """Prepend pip user script dir so CLIs (e.g. browser-use) resolve in subprocess."""
     import site
@@ -634,7 +457,7 @@ def bash(command: str) -> str:
     return "\n".join(parts) if parts else "(no output)"
 
 def get_builtin_tools() -> list:
-    """Return the list of built-in tools for the skill-aware agent."""
+    """Return the list of built-in tools for the agent."""
     return [execute_code, bash, upload_file_to_s3]
 
 #########################################################
@@ -756,9 +579,9 @@ class MCPClientManager:
             try:
                 if "transport" in config and config["transport"] == "streamable_http":
                     try:
-                        self.clients[name] = MCPClient(lambda: _streamable_http_transport(
-                            config["url"],
-                            config["headers"],
+                        self.clients[name] = MCPClient(lambda: streamable_http_client(
+                            url=config["url"], 
+                            headers=config["headers"]
                         ))
                     except Exception as http_error:
                         logger.error(f"Failed to create streamable HTTP client for {name}: {http_error}")
@@ -1038,15 +861,7 @@ def update_tools(strands_tools: list, mcp_servers: list):
             
     return tools
 
-BASE_SYSTEM_PROMPT = (
-    "당신의 이름은 서연이고, 질문에 대해 친절하게 답변하는 사려깊은 인공지능 도우미입니다."
-    "상황에 맞는 구체적인 세부 정보를 충분히 제공합니다." 
-    "모르는 질문을 받으면 솔직히 모른다고 말합니다."
-    "결과 파일이 있으면 upload_file_to_s3로 업로드하여 URL을 제공합니다."
-)
-
 def create_agent(tools: list, plugin_name: Optional[str], command: Optional[str] = None):
-    # add skills metadata to system prompt
     system_prompt = build_system_prompt(plugin_name, command)
 
     model = get_model()
@@ -1097,9 +912,6 @@ async def run_strands_agent(query: str, strands_tools: list[str], mcp_servers: l
         init_mcp_clients(mcp_servers)
 
         tools = update_tools(strands_tools, mcp_servers)
-
-        if chat.skill_mode == 'Enable':
-            tools.append(get_skill_instructions)
 
         agent = create_agent(tools, plugin_name)
         tool_list = get_tool_list(tools)
