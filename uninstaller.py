@@ -12,7 +12,7 @@ import time
 from botocore.exceptions import ClientError
 
 # Configuration
-project_name = "strands-skill" # at least 3 characters
+project_name = "strands-skills" # at least 3 characters
 region = "us-west-2"
 
 sts_client = boto3.client("sts", region_name=region)

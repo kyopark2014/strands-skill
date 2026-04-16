@@ -24,12 +24,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger("streamlit")
 
-os.environ["DEV"] = "true"  # Skip user confirmation of get_user_input
-
 config = utils.load_config()
 
 # title
-st.set_page_config(page_title='Strands Skill', page_icon=None, layout="centered", initial_sidebar_state="auto", menu_items=None)
+st.set_page_config(page_title='Strands Skills', page_icon=None, layout="centered", initial_sidebar_state="auto", menu_items=None)
 
 plugin_list = plugin.available_plugins_list()
 logger.info(f"plugin_list: {plugin_list}")
@@ -89,8 +87,8 @@ with st.sidebar:
     st.title("🔮 Menu")
     
     st.markdown(
-        "Stands Agent SDK를 이용하여 효율적인 Agent를 구현합니다." 
-        "상세한 코드는 [Github](https://github.com/kyopark2014/strands-skill)을 참조하세요."
+        "Stands Agent SDK와 Agent Skills를 이용하여 효과적인 Agent를 구현합니다." 
+        "상세한 코드는 [Github](https://github.com/kyopark2014/strands-skills)을 참조하세요."
     )
 
     st.subheader("🐱 대화 형태")
