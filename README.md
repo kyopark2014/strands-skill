@@ -4,23 +4,6 @@
 
 여기에서 사용하는 architecture는 아래와 같습니다. Agent의 기본동작 확인 및 구현을 위해 EC2에 docker 형태로 탑재되어 ALB와 CloudFront를 이용해 사용자가 streamlit으로 동작을 테스트 할 수 있습니다. Agent가 생성하는 그림이나 문서는 S3를 이용해 공유될 수 있으며, EC2에 내장된 MCP server/client를 이용해 인터넷검색(Tavily), RAG(knowledge base) AWS tools(use-aws), AWS Document를 이용할 수 있습니다.
 
-<img width="900" alt="image" src="https://github.com/user-attachments/assets/69327c04-ea88-4647-bfce-4e2cae6beba0" />
-
-
-
-
-
-Strands agent는 아래와 같은 [Agent Loop](https://strandsagents.com/0.1.x/user-guide/concepts/agents/agent-loop/)을 가지고 있으므로, 적절한 tool을 선택하여 실행하고, reasoning을 통해 반복적으로 필요한 동작을 수행합니다. 
-
-![image](https://github.com/user-attachments/assets/6f641574-9d0b-4542-b87f-98d7c2715e09)
-
-Tool들을 아래와 같이 병렬로 처리할 수 있습니다.
-
-```python
-agent = Agent(
-    max_parallel_tools=4  
-)
-```
 
 ## Strands Agent 활용 방법
 
