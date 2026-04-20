@@ -1085,9 +1085,20 @@ def update_tools(strands_tools: list, mcp_servers: list):
             
     return tools
 
-def create_agent(tools: list, plugin_name: Optional[str], command: Optional[str] = None):
-    # add skills metadata to system prompt
-    system_prompt = build_system_prompt(plugin_name, command)
+def create_agent(strands_tools: list[str], mcp_servers: list[str], skill_list: list[str]):
+    init_mcp_clients(mcp_servers)
+
+    tools = update_tools(strands_tools, mcp_servers)
+
+    if chat.skill_mode == 'Enable':
+        tools.append(get_skill_instructions)
+
+        skill_info = skill.get_skill_info(skill_list)
+        logger.info(f"skill_info: {skill_info}")
+
+        system_prompt = skill.build_skill_prompt(skill_info)
+    else:
+        system_prompt = BASE_SYSTEM_PROMPT
 
     model = get_model()
     
@@ -1115,9 +1126,9 @@ def get_tool_list(tools):
 
 selected_strands_tools = []
 selected_mcp_servers = []
-active_plugin = None
+selected_skill_list = []
 
-async def run_strands_agent(query: str, strands_tools: list[str], mcp_servers: list[str], plugin_name: Optional[str], notification_queue):
+async def run_strands_agent(query: str, strands_tools: list[str], mcp_servers: list[str], skill_list: list[str], notification_queue):
     """Run the strands agent with streaming and tool notifications."""
     queue = notification_queue
     queue.reset()
@@ -1125,24 +1136,16 @@ async def run_strands_agent(query: str, strands_tools: list[str], mcp_servers: l
     image_url = []
     references = []
 
-    global agent, selected_strands_tools, selected_mcp_servers, active_plugin
+    global agent, selected_strands_tools, selected_mcp_servers, selected_skill_list, active_plugin
 
-    if selected_strands_tools != strands_tools or selected_mcp_servers != mcp_servers or active_plugin != plugin_name:        
+    if selected_strands_tools != strands_tools or selected_mcp_servers != mcp_servers or selected_skill_list != skill_list:        
         selected_strands_tools = strands_tools
         selected_mcp_servers = mcp_servers
-        active_plugin = plugin_name
+        selected_skill_list = skill_list
         
         mcp_manager.stop_agent_clients()
         
-        init_mcp_clients(mcp_servers)
-
-        tools = update_tools(strands_tools, mcp_servers)
-
-        if chat.skill_mode == 'Enable':
-            tools.append(get_skill_instructions)
-
-        agent = create_agent(tools, plugin_name)
-        tool_list = get_tool_list(tools)
+        agent = create_agent(strands_tools, mcp_servers, skill_list)
     
         # Start or reuse persistent MCP clients
         mcp_manager.start_agent_clients(mcp_servers)

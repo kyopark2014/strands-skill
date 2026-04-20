@@ -517,11 +517,14 @@ if prompt := st.chat_input("메시지를 입력하세요."):
             with st.status("thinking...", expanded=True, state="running") as status:
                 notification_queue = NotificationQueue(container=status)
 
+                skill_list = selected_skills if selected_skills else []
+                logger.info(f"skill_list: {skill_list}")
+
                 response, image_urls = asyncio.run(strands_agent.run_strands_agent(
                     query=prompt, 
                     strands_tools=selected_strands_tools, 
                     mcp_servers=selected_mcp_servers, 
-                    plugin_name="base",
+                    skill_list=skill_list,
                     notification_queue=notification_queue))
 
         else:
@@ -529,7 +532,18 @@ if prompt := st.chat_input("메시지를 입력하세요."):
                 if mode == plugin["name"]:
                     with st.status("thinking...", expanded=True, state="running") as status:
                         notification_queue = NotificationQueue(container=status)
-                        response, image_urls = asyncio.run(plugin_agent.run_plugin_agent(prompt, selected_strands_tools, selected_mcp_servers, plugin["name"], notification_queue))
+
+                        skill_list = selected_skills if selected_skills else []
+                        logger.info(f"skill_list: {skill_list}")
+
+                        response, image_urls = asyncio.run(plugin_agent.run_plugin_agent(
+                            query=prompt, 
+                            strands_tools=selected_strands_tools, 
+                            mcp_servers=selected_mcp_servers, 
+                            skill_list=skill_list,
+                            plugin_name=plugin["name"], 
+                            plugin_skill_list=plugin_skills,
+                            notification_queue=notification_queue))
 
         if chat.debug_mode == 'Disable':
            st.markdown(response)

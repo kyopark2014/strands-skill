@@ -3,8 +3,11 @@ import chat
 import logging
 import sys
 import plugin
+import skill
 import strands_agent
 from typing import Optional
+from strands import Agent, tool
+from strands.agent.conversation_manager import SlidingWindowConversationManager
 
 logging.basicConfig(
     level=logging.INFO,
@@ -20,14 +23,58 @@ WORKING_DIR = os.path.dirname(os.path.abspath(__file__))
 ARTIFACTS_DIR = os.path.join(WORKING_DIR, "artifacts")
 PLUGINS_DIR = os.path.join(WORKING_DIR, "plugins")
 
+conversation_manager = SlidingWindowConversationManager(
+    window_size=10,  
+)
+
+def create_agent(strands_tools: list[str], mcp_servers: list[str], skill_list: list[str], \
+ plugin_name: Optional[str], plugin_skill_list: list[str], command: Optional[str] = None):
+    strands_agent.init_mcp_clients(mcp_servers)
+
+    tools = strands_agent.update_tools(strands_tools, mcp_servers)
+    logger.info(f"tools count: {len(tools)}")
+
+    if chat.skill_mode == 'Enable':
+        tools.append(strands_agent.get_skill_instructions)
+
+        skill_info = skill.get_skill_info(skill_list)
+        logger.info(f"skill_info: {skill_info}")
+
+        plugin_skill_info = skill.get_plugin_skill_info(plugin_name, plugin_skill_list)
+        logger.info(f"plugin_name: {plugin_name}, plugin_skill_info: {plugin_skill_info}")        
+        skill_info.extend(plugin_skill_info)
+
+        if command:
+            system_prompt = skill.build_command_prompt(plugin_name, skill_info, command)
+        else:
+            system_prompt = skill.build_skill_prompt(skill_info)        
+        logger.info(f"system prompt: {system_prompt}")
+
+    else:
+        system_prompt = strands_agent.BASE_SYSTEM_PROMPT
+
+    model = strands_agent.get_model()
+    
+    agent = Agent(
+        model=model,
+        system_prompt=system_prompt,
+        tools=tools,
+        conversation_manager=conversation_manager,
+        #max_parallel_tools=2
+    )
+
+    return agent
+
 selected_strands_tools = []
 selected_mcp_servers = []
+selected_skill_list = []
+selected_plugin_skill_list = []
 active_plugin = None
 
-async def run_plugin_agent(query: str, strands_tools: list[str], mcp_servers: list[str], plugin_name: Optional[str], notification_queue):
+async def run_plugin_agent(query: str, strands_tools: list[str], mcp_servers: list[str], skill_list: list[str], plugin_name: Optional[str], plugin_skill_list: list[str], notification_queue):
     """Run the plugin agent with streaming and tool notifications."""    
 
-    global selected_strands_tools, selected_mcp_servers, active_plugin
+    global selected_strands_tools, selected_mcp_servers, selected_skill_list, selected_plugin_skill_list, active_plugin
 
     queue = notification_queue
     queue.reset()
@@ -40,31 +87,23 @@ async def run_plugin_agent(query: str, strands_tools: list[str], mcp_servers: li
         command = query.split(" ")[0].lstrip("/")
         logger.info(f"command: {command}")
 
-    if selected_strands_tools != strands_tools or selected_mcp_servers != mcp_servers or active_plugin != plugin_name:
+    if strands_agent.agent is None or selected_strands_tools != strands_tools or selected_mcp_servers != mcp_servers or selected_skill_list != skill_list or selected_plugin_skill_list != plugin_skill_list or active_plugin != plugin_name:
         selected_strands_tools = strands_tools
         selected_mcp_servers = mcp_servers
+        selected_skill_list = skill_list
+        selected_plugin_skill_list = plugin_skill_list
         active_plugin = plugin_name
 
         strands_agent.mcp_manager.stop_agent_clients()
-
-        strands_agent.init_mcp_clients(mcp_servers)
-
-        tools = strands_agent.update_tools(strands_tools, mcp_servers)
-
-        if chat.skill_mode == 'Enable':
-            tools.append(strands_agent.get_skill_instructions)
-
-        strands_agent.agent = strands_agent.create_agent(tools, plugin_name, command)
-        tool_list = strands_agent.get_tool_list(tools)
-        logger.info(f"tool_list: {tool_list}")
+        
+        strands_agent.agent = create_agent(strands_tools, mcp_servers, skill_list, \
+         plugin_name, plugin_skill_list, command)
 
         strands_agent.mcp_manager.start_agent_clients(mcp_servers)
 
-    elif command:
-        tools = strands_agent.update_tools(strands_tools, mcp_servers)
-        if chat.skill_mode == 'Enable':
-            tools.append(strands_agent.get_skill_instructions)
-        strands_agent.agent = strands_agent.create_agent(tools, plugin_name, command)
+    if strands_agent.agent is None:
+        logger.error("Failed to create agent - app is None")
+        return "에이전트를 생성할 수 없습니다. MCP 서버 설정 또는 도구 구성을 확인해주세요.", []
 
     # run agent
     final_result = current = ""

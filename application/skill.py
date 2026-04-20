@@ -136,6 +136,44 @@ def register_plugin_skills(plugin_name: str):
     skill_manager.discover_plugin_skills(skills_dir)
 
 
+def get_skill_info(skill_list: list) -> list:
+    skill_manager = skill_managers.get('base')
+    if skill_manager is None:
+        skill_manager = SkillManager(SKILLS_DIR)
+        skill_managers['base'] = skill_manager
+        skill_manager.discover_plugin_skills(SKILLS_DIR)
+
+    registry = skill_manager.registry
+    
+    if not registry:
+        return []
+    
+    skill_info = []
+    for s in registry.values():
+        if s.name in skill_list:
+            skill_info.append({"name": s.name, "description": s.description})
+        
+    return skill_info
+
+
+def get_plugin_skill_info(plugin_name: str, plugin_skill_list: list) -> list:
+    skill_manager = skill_managers.get(plugin_name)
+    if skill_manager is None:
+        skills_dir = os.path.join(WORKING_DIR, "plugins", plugin_name, "skills")
+        skill_manager = SkillManager(skills_dir)
+        skill_managers[plugin_name] = skill_manager
+        skill_manager.discover_plugin_skills(skills_dir)
+
+    registry = skill_manager.registry
+    plugin_skill_info = []
+    for s in registry.values():
+        if s.name in plugin_skill_list:
+            plugin_skill_info.append({"name": s.name, "description": s.description})
+    logger.info(f"plugin_skill_info: {plugin_skill_info}")
+
+    return plugin_skill_info
+
+
 def available_skill_info(plugin_name: str) -> list:
     skill_manager = skill_managers.get(plugin_name)
     if skill_manager is None:
@@ -192,21 +230,16 @@ SKILL_USAGE_GUIDE = (
     "\n## Skill 사용 가이드\n"
     "위의 <available_skills>에 나열된 skill이 사용자의 요청과 관련될 때:\n"
     "1. 먼저 get_skill_instructions 도구로 해당 skill의 상세 지침을 로드하세요.\n"
-    "2. 지침에 포함된 코드 패턴을 execute_code 도구로 실행하세요.\n"
-    "3. skill 지침이 없는 일반 질문은 직접 답변하세요.\n"
+    "2. **중요: 지침을 읽기 전에 어떤 작업을 할지 단정짓지 마세요.** "
+    "skill의 description에 서브커맨드(query, path, explain 등)가 있다면, "
+    "사용자 명령의 서브커맨드를 정확히 파악한 후 그에 맞는 동작을 설명하세요.\n"
+    "3. 지침에 포함된 코드 패턴을 execute_code 도구로 실행하세요.\n"
+    "4. skill 지침이 없는 일반 질문은 직접 답변하세요.\n"
 )
 
-def build_skill_prompt(plugin_name: str) -> str:
+def build_skill_prompt(skill_info: list) -> str:
     """Build skill-related prompt: path info, available skills XML, and usage guide."""
-    skill_info = selected_skill_info(plugin_name)
-    logger.info(f"plugin_name: {plugin_name}, skill_info: {skill_info}")
-
-    if plugin_name != "base":
-        default_skill_info = selected_skill_info("base")
-        if default_skill_info:
-            skill_info.extend(default_skill_info)
-            logger.info(f"default_skill_info: {default_skill_info}")
-
+        
     path_info = (
         f"## Paths (use absolute paths for write_file, read_file)\n"
         f"- WORKING_DIR: {WORKING_DIR}\n"
@@ -258,16 +291,8 @@ COMMAND_USAGE_GUIDE = (
 )
 
 
-def build_command_prompt(plugin_name: str, command: str) -> str:
+def build_command_prompt(plugin_name: str, skill_info: list, command: str) -> str:
     """Build prompt for command mode: path info, command instructions, and available skills."""
-    skill_info = selected_skill_info(plugin_name)
-    logger.info(f"plugin_name: {plugin_name}, command: {command}, skill_info: {skill_info}")
-
-    if plugin_name != "base":
-        default_skill_info = selected_skill_info("base")
-        if default_skill_info:
-            skill_info.extend(default_skill_info)
-            logger.info(f"default_skill_info: {default_skill_info}")
 
     path_info = (
         f"## Paths (use absolute paths for write_file, read_file)\n"
@@ -311,6 +336,7 @@ def get_skill_instructions(plugin_name: str, skill_name: str) -> str:
             skills_dir = os.path.join(WORKING_DIR, "plugins", plugin_name, "skills")
         skill_manager = SkillManager(skills_dir)
         skill_managers[plugin_name] = skill_manager
+        skill_manager.discover_plugin_skills(skills_dir)
 
     instructions = skill_manager.get_skill_instructions(skill_name)
     if instructions:
