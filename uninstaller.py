@@ -230,28 +230,66 @@ def delete_single_vpc(vpc_id: str):
         except Exception as e:
             logger.warning(f"    Could not delete network interfaces: {e}")
         
-        # Delete NAT gateways
+        # Delete NAT gateways and release only EIP(s) tied to those NAT gateways (VPC-scoped).
+        allocation_ids_from_nat = set()
         nat_gws = ec2_client.describe_nat_gateways(
             Filters=[{"Name": "vpc-id", "Values": [vpc_id]}]
         )
         for nat_gw in nat_gws["NatGateways"]:
-            if nat_gw["State"] != "deleted":
-                ec2_client.delete_nat_gateway(NatGatewayId=nat_gw["NatGatewayId"])
-                logger.info(f"    ✓ Deleted NAT Gateway: {nat_gw['NatGatewayId']}")
-        
-        # Wait for NAT gateways to be deleted
-        time.sleep(30)
-        
-        # Release Elastic IPs
-        eips = ec2_client.describe_addresses()
-        for eip in eips["Addresses"]:
-            if "NetworkInterfaceId" not in eip and "InstanceId" not in eip:
+            if nat_gw["State"] in ("deleted", "deleting"):
+                continue
+            for addr in nat_gw.get("NatGatewayAddresses", []):
+                aid = addr.get("AllocationId")
+                if aid:
+                    allocation_ids_from_nat.add(aid)
+            ec2_client.delete_nat_gateway(NatGatewayId=nat_gw["NatGatewayId"])
+            logger.info(f"    ✓ Deleted NAT Gateway: {nat_gw['NatGatewayId']}")
+
+        # Poll until NAT gateways are gone (NAT deletion often exceeds a fixed 30s sleep).
+        for _ in range(40):
+            pending = ec2_client.describe_nat_gateways(
+                Filters=[
+                    {"Name": "vpc-id", "Values": [vpc_id]},
+                    {
+                        "Name": "state",
+                        "Values": ["pending", "failed", "deleting", "available"],
+                    },
+                ]
+            )
+            active = [
+                ng
+                for ng in pending["NatGateways"]
+                if ng["State"] not in ("deleted",)
+            ]
+            if not active:
+                break
+            time.sleep(15)
+        else:
+            logger.warning(
+                "    NAT gateways still not fully cleared; EIP release may fail until deletion completes."
+            )
+
+        # Release Elastic IPs allocated for this VPC's NAT only (avoid region-wide unassociated EIP purge).
+        for alloc_id in allocation_ids_from_nat:
+            for attempt in range(16):
                 try:
-                    ec2_client.release_address(AllocationId=eip["AllocationId"])
-                    logger.info(f"    ✓ Released EIP: {eip['AllocationId']}")
-                except:
-                    pass
-        
+                    ec2_client.release_address(AllocationId=alloc_id)
+                    logger.info(f"    ✓ Released EIP from NAT: {alloc_id}")
+                    break
+                except ClientError as e:
+                    code = e.response["Error"]["Code"]
+                    if code == "InvalidAddress.NotFound":
+                        break
+                    if attempt < 15:
+                        logger.debug(
+                            f"    EIP {alloc_id} not releasable yet ({code}); retry in 15s"
+                        )
+                        time.sleep(15)
+                    else:
+                        logger.warning(
+                            f"    Could not release EIP {alloc_id} after retries: {e}"
+                        )
+
         # Delete security groups
         sgs = ec2_client.describe_security_groups(
             Filters=[{"Name": "vpc-id", "Values": [vpc_id]}]
